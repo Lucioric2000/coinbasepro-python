@@ -18,21 +18,8 @@ from cbpro.cbpro_auth import get_auth_headers
 
 
 class WebsocketClient(object):
-    def __init__(
-            self,
-            url="wss://ws-feed.pro.coinbase.com",
-            products=None,
-            message_type="subscribe",
-            mongo_collection=None,
-            should_print=True,
-            auth=False,
-            api_key="",
-            api_secret="",
-            api_passphrase="",
-            # Make channels a required keyword-only argument; see pep3102
-            *,
-            # Channel options: ['ticker', 'user', 'matches', 'level2', 'full']
-            channels):
+    def __init__(self, url="wss://ws-feed.pro.coinbase.com", products=None, message_type="subscribe", mongo_collection=None,
+                 should_print=True, auth=False, api_key="", api_secret="", api_passphrase="", channels=None):
         self.url = url
         self.products = products
         self.channels = channels
@@ -57,7 +44,6 @@ class WebsocketClient(object):
         self.stop = False
         self.on_open()
         self.thread = Thread(target=_go)
-        self.keepalive = Thread(target=self._keepalive)
         self.thread.start()
 
     def _connect(self):
@@ -70,8 +56,7 @@ class WebsocketClient(object):
             self.url = self.url[:-1]
 
         if self.channels is None:
-            self.channels = [{"name": "ticker", "product_ids": [product_id for product_id in self.products]}]
-            sub_params = {'type': 'subscribe', 'product_ids': self.products, 'channels': self.channels}
+            sub_params = {'type': 'subscribe', 'product_ids': self.products}
         else:
             sub_params = {'type': 'subscribe', 'product_ids': self.products, 'channels': self.channels}
 
@@ -88,15 +73,14 @@ class WebsocketClient(object):
 
         self.ws.send(json.dumps(sub_params))
 
-    def _keepalive(self, interval=30):
-        while self.ws.connected:
-            self.ws.ping("keepalive")
-            time.sleep(interval)
-
     def _listen(self):
-        self.keepalive.start()
         while not self.stop:
             try:
+                start_t = 0
+                if time.time() - start_t >= 30:
+                    # Set a 30 second ping to keep connection alive
+                    self.ws.ping("keepalive")
+                    start_t = time.time()
                 data = self.ws.recv()
                 msg = json.loads(data)
             except ValueError as e:
@@ -112,27 +96,24 @@ class WebsocketClient(object):
                 self.ws.close()
         except WebSocketConnectionClosedException as e:
             pass
-        finally:
-            self.keepalive.join()
 
         self.on_close()
 
     def close(self):
-        self.stop = True   # will only disconnect after next msg recv
-        self._disconnect() # force disconnect so threads can join
+        self.stop = True
         self.thread.join()
 
     def on_open(self):
         if self.should_print:
-            print("-- Subscribed! --\n")
+            print("-- {} Subscribed! --\n".format(self.products))
 
     def on_close(self):
         if self.should_print:
-            print("\n-- Socket Closed --")
+            print("\n-- {} Socket Closed --".format(self.products))
 
     def on_message(self, msg):
-        if self.should_print:
-            print(msg)
+        # if self.should_print:
+            # print(msg)
         if self.mongo_collection:  # dump JSON to given mongo collection
             self.mongo_collection.insert_one(msg)
 
