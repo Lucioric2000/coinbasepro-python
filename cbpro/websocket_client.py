@@ -11,12 +11,14 @@ import base64
 import hmac
 import hashlib
 import time
+import logging
 from threading import Thread
 from websocket import create_connection, WebSocketConnectionClosedException
 from pymongo import MongoClient
 from cbpro.cbpro_auth import get_auth_headers
 
 
+logger = logging.getLogger(__name__)
 class WebsocketClient(object):
     def __init__(self, url="wss://ws-feed.pro.coinbase.com", products=None, message_type="subscribe", mongo_collection=None,
                  should_print=True, auth=False, api_key="", api_secret="", api_passphrase="", channels=None):
@@ -37,9 +39,11 @@ class WebsocketClient(object):
 
     def start(self):
         def _go():
-            self._connect()
-            self._listen()
-            self._disconnect()
+            while True:
+                self._connect()
+                self._listen()
+                self._disconnect()
+                print("disconnk")
 
         self.stop = False
         self.on_open()
@@ -69,15 +73,16 @@ class WebsocketClient(object):
             sub_params['passphrase'] = auth_headers['CB-ACCESS-PASSPHRASE']
             sub_params['timestamp'] = auth_headers['CB-ACCESS-TIMESTAMP']
 
-        self.ws = create_connection(self.url)
+        self.ws = create_connection(self.url, timeout=30, enable_multithread=True)
 
         self.ws.send(json.dumps(sub_params))
 
     def _listen(self):
+        start_t = time.time()
+        self.ws.ping("keepalive")
         while not self.stop:
             try:
-                start_t = 0
-                if time.time() - start_t >= 30:
+                if (time.time() - start_t) >= 30:
                     # Set a 30 second ping to keep connection alive
                     self.ws.ping("keepalive")
                     start_t = time.time()
@@ -89,13 +94,14 @@ class WebsocketClient(object):
                 self.on_error(e)
             else:
                 self.on_message(msg)
+        print("onstop")
 
     def _disconnect(self):
         try:
             if self.ws:
                 self.ws.close()
         except WebSocketConnectionClosedException as e:
-            pass
+            logger.exception("Error when closing websocket")
 
         self.on_close()
 
@@ -114,7 +120,7 @@ class WebsocketClient(object):
     def on_message(self, msg):
         # if self.should_print:
             # print(msg)
-        if self.mongo_collection:  # dump JSON to given mongo collection
+        if self.mongo_collection: # is not None:  # dump JSON to given mongo collection
             self.mongo_collection.insert_one(msg)
 
     def on_error(self, e, data=None):
